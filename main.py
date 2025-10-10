@@ -212,7 +212,7 @@ def shorten(request: Request, url: str = Form(...), slug: str = Form(None)):
         return {"error": "This URL has been flagged as unsafe."}
 
     email = request.session["email"]
-    slug = slug or secrets.token_urlsafe(4)[:6]
+    slug = slug[:6] or secrets.token_urlsafe(4)[:6]
     now = time.time()
 
     conn.execute("""
