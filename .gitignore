@@ -1,0 +1,5 @@
+venv
+.env
+allowed_users.txt
+*.db
+__pycache__/main.cpython-312.pyc
