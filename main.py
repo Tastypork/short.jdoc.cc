@@ -109,8 +109,12 @@ def load_allowed_users():
 
 load_dotenv()
 
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY or not SECRET_KEY.strip():
+    raise RuntimeError("SECRET_KEY must be set to a non-empty value")
+
 app = FastAPI(title="jdoc.cc")
-app.add_middleware(SessionMiddleware, secret_key=os.getenv("SECRET_KEY"))
+app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY)
 
 templates = Jinja2Templates(directory="templates")
 
@@ -202,6 +206,36 @@ def logout(request: Request):
     request.session.clear()
     return RedirectResponse("/")
 
+def save_slug(slug: str, url: str, now: float, email: str) -> bool:
+    """Store a slug for this user. Never overwrite a slug owned by someone else."""
+    cur = conn.execute(
+        """
+        UPDATE urls
+        SET target = ?, clicks = 0, created_at = ?, last_accessed = NULL
+        WHERE slug = ? AND created_by = ?
+        """,
+        (url, now, slug, email),
+    )
+    if cur.rowcount:
+        conn.commit()
+        return True
+    try:
+        conn.execute(
+            """
+            INSERT INTO urls (slug, target, clicks, created_at, last_accessed, created_by)
+            VALUES (?, ?, 0, ?, NULL, ?)
+            """,
+            (slug, url, now, email),
+        )
+        conn.commit()
+        return True
+    except sqlite3.IntegrityError:
+        conn.rollback()
+        owner = conn.execute(
+            "SELECT created_by FROM urls WHERE slug = ?", (slug,)
+        ).fetchone()
+        return owner is not None and owner[0] == email
+
 @app.post("/shorten")
 def shorten(request: Request, url: str = Form(...), slug: str = Form(None)):
     if "email" not in request.session:
@@ -212,16 +246,20 @@ def shorten(request: Request, url: str = Form(...), slug: str = Form(None)):
         return {"error": "This URL has been flagged as unsafe."}
 
     email = request.session["email"]
-    slug = slug[:6] or secrets.token_urlsafe(4)[:6]
+    requested = (slug or "").strip()[:6]
     now = time.time()
 
-    conn.execute("""
-        INSERT OR REPLACE INTO urls (slug, target, clicks, created_at, last_accessed, created_by)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, (slug, url, 0, now, None, email))
-    conn.commit()
+    if requested:
+        saved = save_slug(requested, url, now, email)
+        if not saved:
+            return {"error": "This alias is already taken."}
+        return {"short_url": f"https://jdoc.cc/{requested}"}
 
-    return {"short_url": f"https://jdoc.cc/{slug}"}
+    for _ in range(8):
+        generated = secrets.token_urlsafe(4)[:6]
+        if save_slug(generated, url, now, email):
+            return {"short_url": f"https://jdoc.cc/{generated}"}
+    return {"error": "Could not generate a unique alias. Try again."}
 
 @app.get("/{slug}")
 def redirect(slug: str):
