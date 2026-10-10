@@ -14,6 +14,8 @@ from google.oauth2 import id_token
 import requests as httpx      # for HTTP calls (Safe Browsing API)
 from google.auth.transport import requests as google_requests  # for OAuth token verification
 
+BASE_URL = "https://short.jdoc.cc"
+
 # --- Google Safe Browsing Setup ---
 SAFE_BROWSING_API_KEY = os.getenv("GOOGLE_SAFE_BROWSING_API_KEY")
 SAFE_BROWSING_URL = f"https://safebrowsing.googleapis.com/v4/threatMatches:find?key={SAFE_BROWSING_API_KEY}"
@@ -73,7 +75,7 @@ def is_url_safe(url: str) -> bool:
         return True  # Don't block if key missing
 
     body = {
-        "client": {"clientId": "jdoc.cc", "clientVersion": "1.0"},
+        "client": {"clientId": "short.jdoc.cc", "clientVersion": "1.0"},
         "threatInfo": {
             "threatTypes": [
                 "MALWARE",
@@ -113,7 +115,7 @@ SECRET_KEY = os.getenv("SECRET_KEY")
 if not SECRET_KEY or not SECRET_KEY.strip():
     raise RuntimeError("SECRET_KEY must be set to a non-empty value")
 
-app = FastAPI(title="jdoc.cc")
+app = FastAPI(title="short.jdoc.cc")
 app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY)
 
 templates = Jinja2Templates(directory="templates")
@@ -148,7 +150,7 @@ flow = Flow.from_client_config(
         "web": {
             "client_id": GOOGLE_CLIENT_ID,
             "client_secret": GOOGLE_CLIENT_SECRET,
-            "redirect_uris": ["https://jdoc.cc/auth/callback"],
+            "redirect_uris": [f"{BASE_URL}/auth/callback"],
             "auth_uri": "https://accounts.google.com/o/oauth2/auth",
             "token_uri": "https://oauth2.googleapis.com/token"
         }
@@ -165,14 +167,14 @@ def home(request: Request):
 
 @app.get("/login")
 def login():
-    flow.redirect_uri = "https://jdoc.cc/auth/callback"
+    flow.redirect_uri = f"{BASE_URL}/auth/callback"
     auth_url, _ = flow.authorization_url(prompt="consent", access_type="offline", include_granted_scopes="true")
     return RedirectResponse(auth_url)
 
 
 @app.get("/auth/callback")
 def callback(request: Request):
-    flow.redirect_uri = "https://jdoc.cc/auth/callback"
+    flow.redirect_uri = f"{BASE_URL}/auth/callback"
     flow.fetch_token(authorization_response=str(request.url))
 
     credentials = flow.credentials
@@ -253,12 +255,12 @@ def shorten(request: Request, url: str = Form(...), slug: str = Form(None)):
         saved = save_slug(requested, url, now, email)
         if not saved:
             return {"error": "This alias is already taken."}
-        return {"short_url": f"https://jdoc.cc/{requested}"}
+        return {"short_url": f"{BASE_URL}/{requested}"}
 
     for _ in range(8):
         generated = secrets.token_urlsafe(4)[:6]
         if save_slug(generated, url, now, email):
-            return {"short_url": f"https://jdoc.cc/{generated}"}
+            return {"short_url": f"{BASE_URL}/{generated}"}
     return {"error": "Could not generate a unique alias. Try again."}
 
 @app.get("/{slug}")
@@ -288,7 +290,7 @@ def get_my_links(request: Request):
     links = [
         {
             "slug": slug,
-            "short_url": f"https://jdoc.cc/{slug}",
+            "short_url": f"{BASE_URL}/{slug}",
             "target": target,
             "clicks": clicks,
             "created_at": datetime.fromtimestamp(created_at).strftime("%Y-%m-%d %H:%M:%S")
